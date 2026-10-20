@@ -32,17 +32,19 @@ def augment(img, steering, rng=None):
     """Simple augmentation: flip, brightness, shadow."""
     if rng is None:
         rng = np.random
+    rand = rng.random if hasattr(rng, "random") else rng.rand
+    uniform = rng.uniform if hasattr(rng, "uniform") else rng.uniform
     out = img.copy()
     # horizontal flip
-    if rng.rand() < 0.5:
+    if rand() < 0.5:
         out = np.fliplr(out).copy()
         steering = -steering
     # brightness
-    if rng.rand() < 0.5:
-        factor = rng.uniform(0.6, 1.4)
+    if rand() < 0.5:
+        factor = uniform(0.6, 1.4)
         out = np.clip(out * factor, -1.0, 1.0)
     # gaussian blur
-    if rng.rand() < 0.2:
+    if rand() < 0.2:
         out = cv2.GaussianBlur(out, (3, 3), 0)
     return out, steering
 

@@ -96,48 +96,59 @@ def main():
 
         collected = 0
         t0 = time.time()
-        while collected < args.frames:
-            env.tick()
-            image = env.get_image(timeout=2.0)
-            if image is None:
-                continue
+        stop_file = os.path.join(os.path.dirname(args.out), "STOP")
+        try:
+            while collected < args.frames:
+                if os.path.exists(stop_file):
+                    print("[drive] STOP file detected, shutting down.")
+                    break
+                env.tick()
+                image = env.get_image(timeout=2.0)
+                if image is None:
+                    continue
 
-            arr = carla_image_to_array(image)
-            proc = preprocess_image(arr)
-            inp = np.expand_dims(proc, axis=0)
-            steer = float(model.predict(inp, verbose=0)[0][0])
-            steer = clamp(steer, -1.0, 1.0)
+                arr = carla_image_to_array(image)
+                proc = preprocess_image(arr)
+                inp = np.expand_dims(proc, axis=0)
+                steer = float(model.predict(inp, verbose=0)[0][0])
+                steer = clamp(steer, -1.0, 1.0)
 
-            sp = speed_kmh(env.vehicle)
-            throttle, brake = speed_ctrl.update(sp)
+                sp = speed_kmh(env.vehicle)
+                throttle, brake = speed_ctrl.update(sp)
 
-            control = carla.VehicleControl(throttle=throttle, steer=steer,
-                                          brake=brake)
-            control.manual_gear_shift = False
-            env.vehicle.apply_control(control)
+                control = carla.VehicleControl(throttle=throttle, steer=steer,
+                                              brake=brake)
+                control.manual_gear_shift = False
+                env.vehicle.apply_control(control)
 
-            collisions = env.drain(env.collision_queue)
-            lanes = env.drain(env.lane_queue)
-            collision_flag = 1 if collisions else 0
-            lane_flag = 1 if lanes else 0
+                collisions = env.drain(env.collision_queue)
+                lanes = env.drain(env.lane_queue)
+                collision_flag = 1 if collisions else 0
+                lane_flag = 1 if lanes else 0
 
-            tr = env.vehicle.get_transform()
-            writer.writerow([collected, time.time(), round(sp, 3), round(steer, 4),
-                            round(throttle, 4), round(brake, 4),
-                            round(tr.location.x, 3), round(tr.location.y, 3),
-                            round(tr.location.z, 3), round(tr.rotation.yaw, 3),
-                            collision_flag, lane_flag])
-            f.flush()
+                tr = env.vehicle.get_transform()
+                writer.writerow([collected, time.time(), round(sp, 3), round(steer, 4),
+                                round(throttle, 4), round(brake, 4),
+                                round(tr.location.x, 3), round(tr.location.y, 3),
+                                round(tr.location.z, 3), round(tr.rotation.yaw, 3),
+                                collision_flag, lane_flag])
+                f.flush()
 
-            collected += 1
-            if collected % 50 == 0:
-                print(f"[drive] {collected}/{args.frames}  speed={sp:.1f} km/h  "
-                      f"steer={steer:.3f}  collisions={collision_flag}")
+                collected += 1
+                if collected % 50 == 0:
+                    print(f"[drive] {collected}/{args.frames}  speed={sp:.1f} km/h  "
+                          f"steer={steer:.3f}  collisions={collision_flag}")
 
-            if collision_flag:
-                print("[drive] collision detected!")
-
-        print(f"[drive] done. {collected} frames. log: {args.out}")
+                if collision_flag:
+                    print("[drive] collision detected!")
+        except KeyboardInterrupt:
+            print("\n[drive] interrupted by user (safe shutdown).")
+        finally:
+            try:
+                env.vehicle.apply_control(carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0))
+            except Exception:
+                pass
+            print(f"[drive] done. {collected} frames. log: {args.out}")
     env.cleanup()
 
 

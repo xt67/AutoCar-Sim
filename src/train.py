@@ -1,5 +1,6 @@
-"""Train a behavioral-cloning steering model."""
+"""Train a behavioral-cloning steering model (baseline or augmented)."""
 import argparse
+import json
 import os
 import random
 import sys
@@ -14,8 +15,8 @@ from tensorflow import keras
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from src import utils
-from src.model import build_nvidia_model, build_light_model, MODEL_REGISTRY
-from src.preprocess import preprocess_image
+from src.model import MODEL_REGISTRY
+from src.preprocess import preprocess_image, augment
 from src.utils import ensure_dir, set_seed, save_json
 
 
@@ -24,18 +25,61 @@ def load_dataset(data_dir):
     csv_path = os.path.join(data_dir, "telemetry.csv")
     img_dir = os.path.join(data_dir, "images")
     df = pd.read_csv(csv_path)
-    images = []
-    steerings = []
+    images, steerings = [], []
     for _, row in df.iterrows():
-        img_path = os.path.join(img_dir, str(row["image"]))
-        img = cv2.imread(img_path)
+        img = cv2.imread(os.path.join(img_dir, str(row["image"])))
         if img is None:
             continue
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        images.append(img)
+        images.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         steerings.append(float(row["steering"]))
     print(f"[train] loaded {len(images)} samples from {data_dir}")
     return images, np.array(steerings, dtype=np.float32)
+
+
+def get_split(n, seed=config.RANDOM_SEED):
+    """Deterministic 70/15/15 split, persisted to data/splits.json."""
+    splits_path = os.path.join(config.DATA_DIR, "splits.json") if hasattr(config, "DATA_DIR") else None
+    # resolve relative to project root
+    splits_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data", "splits.json")
+    if os.path.exists(splits_path):
+        with open(splits_path) as f:
+            sp = json.load(f)
+        if sp.get("n") == n and sp.get("seed") == seed:
+            print(f"[train] reusing saved split from {splits_path}")
+            return np.array(sp["train"]), np.array(sp["val"]), np.array(sp["test"])
+    idx = np.arange(n)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(idx)
+    n_train = int(0.70 * n)
+    n_val = int(0.15 * n)
+    train_idx = idx[:n_train]
+    val_idx = idx[n_train:n_train + n_val]
+    test_idx = idx[n_train + n_val:]
+    os.makedirs(os.path.dirname(splits_path), exist_ok=True)
+    with open(splits_path, "w") as f:
+        json.dump({"n": n, "seed": seed,
+                   "train": train_idx.tolist(),
+                   "val": val_idx.tolist(),
+                   "test": test_idx.tolist()}, f)
+    print(f"[train] saved split to {splits_path}")
+    return train_idx, val_idx, test_idx
+
+
+def augment_train(X, y):
+    out_x, out_y = [], []
+    for img, st in zip(X, y):
+        out_x.append(img)
+        out_y.append(st)
+        # flip
+        out_x.append(np.fliplr(img).copy())
+        out_y.append(-st)
+        # brightness
+        if np.random.rand() < 0.5:
+            f = np.random.uniform(0.7, 1.3)
+            out_x.append(np.clip(img * f, -1.0, 1.0).astype(np.float32))
+            out_y.append(st)
+    return np.array(out_x, dtype=np.float32), np.array(out_y, dtype=np.float32)
 
 
 def main():
@@ -45,84 +89,43 @@ def main():
     parser.add_argument("--epochs", type=int, default=config.EPOCHS)
     parser.add_argument("--batch", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.LEARNING_RATE)
-    parser.add_argument("--out", default=str(config.MODELS_DIR / "steering_model.keras"))
-    parser.add_argument("--history", default=str(config.LOGS_DIR / "history.json"))
+    parser.add_argument("--experiment", default="baseline")
     parser.add_argument("--augment", action="store_true")
-    parser.add_argument("--synthetic", action="store_true",
-                        help="Generate synthetic data first if missing")
+    parser.add_argument("--out-dir", default=None)
     args = parser.parse_args()
 
     set_seed(config.RANDOM_SEED)
-    ensure_dir(config.MODELS_DIR)
-    ensure_dir(config.LOGS_DIR)
-
-    if args.synthetic or not os.path.exists(os.path.join(args.data, "telemetry.csv")):
-        print("[train] generating synthetic dataset...")
-        from src.synthetic_data import main as gen
-        # emulate
-        import subprocess
-        subprocess.run([sys.executable, "-m", "src.synthetic_data",
-                        "--frames", "2000", "--out", args.data], check=False)
-        # fallback direct
-        if not os.path.exists(os.path.join(args.data, "telemetry.csv")):
-            from src.synthetic_data import make_frame
-            # direct generate
-            import csv
-            os.makedirs(os.path.join(args.data, "images"), exist_ok=True)
-            with open(os.path.join(args.data, "telemetry.csv"), "w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["frame", "image", "timestamp", "speed_kmh", "steering",
-                            "throttle", "brake", "x", "y", "z", "yaw",
-                            "collision", "lane_invasion"])
-                for i in range(2000):
-                    st = random.uniform(-0.8, 0.8) * 0.6
-                    img = make_frame(st)
-                    fname = f"{i:06d}.png"
-                    cv2.imwrite(os.path.join(args.data, "images", fname),
-                                cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                    w.writerow([i, fname, 0.0, 25.0, round(st, 4), 0.5, 0.0,
-                                0.0, 0.0, 0.0, 0.0, 0, 0])
+    exp_name = args.experiment
+    out_dir = args.out_dir or str(config.MODELS_DIR / exp_name)
+    ensure_dir(out_dir)
+    ensure_dir(config.LOGS_DIR / exp_name)
+    ensure_dir(config.REPORTS_DIR / exp_name)
 
     images, steerings = load_dataset(args.data)
-
-    # preprocess
     X = np.array([preprocess_image(img) for img in images], dtype=np.float32)
     y = steerings.astype(np.float32)
 
-    # augmentation via in-memory expansion
-    if args.augment:
-        aug_imgs = []
-        aug_ys = []
-        for img, st in zip(X, y):
-            aug_imgs.append(img)
-            aug_ys.append(st)
-            # flip
-            aug_imgs.append(np.fliplr(img).copy())
-            aug_ys.append(-st)
-        X = np.array(aug_imgs, dtype=np.float32)
-        y = np.array(aug_ys, dtype=np.float32)
-        print(f"[train] augmented dataset size: {len(X)}")
-
-    # split
-    n = len(X)
-    idx = np.arange(n)
-    np.random.shuffle(idx)
-    split = int(n * (1 - config.VAL_SPLIT))
-    train_idx, val_idx = idx[:split], idx[split:]
+    train_idx, val_idx, test_idx = get_split(len(X), config.RANDOM_SEED)
     X_train, y_train = X[train_idx], y[train_idx]
     X_val, y_val = X[val_idx], y[val_idx]
+    X_test, y_test = X[test_idx], y[test_idx]
+
+    if args.augment:
+        X_train, y_train = augment_train(X_train, y_train)
+        print(f"[train] augmented train size: {len(X_train)}")
 
     model = MODEL_REGISTRY[args.model](lr=args.lr)
     model.summary()
 
+    ckpt_path = os.path.join(out_dir, "model.keras")
     callbacks = [
-        keras.callbacks.ModelCheckpoint(args.out, save_best_only=True,
+        keras.callbacks.ModelCheckpoint(ckpt_path, save_best_only=True,
                                        monitor="val_loss", verbose=1),
         keras.callbacks.EarlyStopping(monitor="val_loss", patience=8,
                                       restore_best_weights=True, verbose=1),
         keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5,
                                          patience=4, verbose=1),
-        keras.callbacks.CSVLogger(str(config.LOGS_DIR / "training.csv")),
+        keras.callbacks.CSVLogger(str(config.LOGS_DIR / exp_name / "training.csv")),
     ]
 
     t0 = time.time()
@@ -135,18 +138,69 @@ def main():
         verbose=1,
     )
     elapsed = time.time() - t0
-    print(f"[train] finished in {elapsed:.1f}s")
+    model.save(ckpt_path)
 
-    # save final model (best already saved via checkpoint)
-    model.save(args.out)
-    hist = {k: [float(x) for x in v] for k, v in history.history.items()}
-    hist["elapsed_seconds"] = elapsed
-    hist["train_samples"] = len(X_train)
-    hist["val_samples"] = len(X_val)
-    hist["model"] = args.model
-    save_json(hist, args.history)
-    print(f"[train] model saved to {args.out}")
-    print(f"[train] history saved to {args.history}")
+    # Evaluation on val + test
+    def ev(split_name, Xs, ys):
+        pred = model.predict(Xs, verbose=0).flatten()
+        mae = float(np.mean(np.abs(pred - ys)))
+        mse = float(np.mean((pred - ys) ** 2))
+        return {"mae": mae, "mse": mse, "n": len(ys)}
+
+    metrics = {
+        "experiment": exp_name,
+        "augment": bool(args.augment),
+        "model": args.model,
+        "epochs_run": len(history.history.get("val_loss", [])),
+        "elapsed_seconds": elapsed,
+        "train_samples": len(X_train),
+        "val_samples": len(X_val),
+        "test_samples": len(X_test),
+        "val": ev("val", X_val, y_val),
+        "test": ev("test", X_test, y_test),
+        "best_val_loss": float(min(history.history.get("val_loss", [float("inf")]))),
+    }
+    save_json(metrics, str(config.LOGS_DIR / exp_name / "metrics.json"))
+    save_json({k: [float(x) for x in v] for k, v in history.history.items()},
+              str(config.LOGS_DIR / exp_name / "history.json"))
+
+    # Save experiment config
+    cfg = vars(args).copy()
+    cfg["random_seed"] = config.RANDOM_SEED
+    cfg["data_dir"] = os.path.abspath(args.data)
+    cfg["split_sizes"] = {"train": len(train_idx), "val": len(val_idx), "test": len(test_idx)}
+    save_json(cfg, str(config.LOGS_DIR / exp_name / "config.json"))
+
+    # Plots
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    rep = config.REPORTS_DIR / exp_name
+    ensure_dir(rep)
+    # loss curve
+    fig, ax = plt.subplots()
+    ax.plot(history.history.get("loss", []), label="train")
+    ax.plot(history.history.get("val_loss", []), label="val")
+    ax.set_xlabel("epoch"); ax.set_ylabel("MSE"); ax.legend(); ax.set_title("Loss")
+    fig.savefig(rep / "loss_curve.png"); plt.close(fig)
+    # prediction vs ground truth (test)
+    pred_test = model.predict(X_test, verbose=0).flatten()
+    fig, ax = plt.subplots()
+    ax.scatter(y_test, pred_test, s=8, alpha=0.5)
+    ax.plot([-1, 1], [-1, 1], "r--")
+    ax.set_xlabel("ground truth"); ax.set_ylabel("prediction")
+    ax.set_title("Prediction vs Ground Truth (test)")
+    fig.savefig(rep / "pred_vs_gt.png"); plt.close(fig)
+    # steering distribution
+    fig, ax = plt.subplots()
+    ax.hist(y_test, bins=30, alpha=0.6, label="ground truth")
+    ax.hist(pred_test, bins=30, alpha=0.6, label="prediction")
+    ax.legend(); ax.set_title("Steering distribution (test)")
+    fig.savefig(rep / "steering_dist.png"); plt.close(fig)
+
+    print(f"[train] experiment '{exp_name}' done in {elapsed:.1f}s")
+    print(f"[train] metrics: {json.dumps(metrics['test'])}")
+    print(f"[train] model: {ckpt_path}")
 
 
 if __name__ == "__main__":
