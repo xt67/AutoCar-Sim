@@ -50,7 +50,29 @@ def build_light_model(input_shape=(config.MODEL_INPUT_HEIGHT,
     return model
 
 
+def build_multisensor_model(input_channels=4, lr=config.LEARNING_RATE):
+    """CNN accepting RGB + extra sensor channels (e.g. depth)."""
+    input_shape = (config.MODEL_INPUT_HEIGHT, config.MODEL_INPUT_WIDTH, input_channels)
+    inputs = keras.Input(shape=input_shape)
+    x = layers.Conv2D(24, (5, 5), strides=(2, 2), activation="relu", padding="valid")(inputs)
+    x = layers.Conv2D(36, (5, 5), strides=(2, 2), activation="relu", padding="valid")(x)
+    x = layers.Conv2D(48, (5, 5), strides=(2, 2), activation="relu", padding="valid")(x)
+    x = layers.Conv2D(64, (3, 3), activation="relu", padding="valid")(x)
+    x = layers.Conv2D(64, (3, 3), activation="relu", padding="valid")(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(100, activation="relu")(x)
+    x = layers.Dropout(0.2)(x)
+    x = layers.Dense(50, activation="relu")(x)
+    x = layers.Dense(10, activation="relu")(x)
+    outputs = layers.Dense(1, name="steering")(x)
+    model = keras.Model(inputs, outputs, name="multisensor_steering")
+    model.compile(optimizer=keras.optimizers.Adam(learning_rate=lr),
+                  loss="mse", metrics=["mae"])
+    return model
+
+
 MODEL_REGISTRY = {
     "nvidia": build_nvidia_model,
     "light": build_light_model,
+    "multisensor": build_multisensor_model,
 }

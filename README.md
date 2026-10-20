@@ -91,6 +91,28 @@ python run_pipeline.py
 python -m pytest -q
 ```
 
+### Hyperparameter tuning
+```bash
+python -m src.tune --data data/collected --lrs 1e-2,1e-3,1e-4 --epochs 10
+```
+
+### Multi-map / weather collection
+```bash
+python -m src.collect_data --mode autopilot --frames 5000 --out data/collected \\
+  --maps Town01,Town03,Town05 --weathers ClearNoon,CloudyNoon,SoftRainNoon --traffic 20
+```
+
+### Multi-sensor (RGB + depth)
+```bash
+python -m src.collect_data --mode autopilot --frames 2000 --out data/collected --depth --traffic 20
+python -m src.train --data data/collected --experiment multisensor --depth --model multisensor --epochs 30
+```
+
+### Reinforcement-learning baseline
+```bash
+python -m src.rl_baseline --episodes 5 --steps 200
+```
+
 ## Limitation note (manual labels)
 When recording `manual_control.py` driving, this project reads `vehicle.get_control()` from the hero actor. That returns the last control applied by the manual-control process, aligned to the next world tick, so labels have an approximate one-tick (~0.05 s) delay. The collector never fabricates labels; if no hero vehicle exists it errors out. For perfectly synchronized labels, run the collector as the control owner (autopilot mode) or extend `manual_control.py` to stream controls (not done here to avoid modifying CARLA examples).
 
@@ -106,6 +128,8 @@ src/
   model.py             CNN architectures
   train.py             baseline/augmented training + experiment tracking
   evaluate.py          metrics + plots
+  tune.py              hyperparameter grid search
+  rl_baseline.py       DQN reinforcement-learning baseline
   drive.py             autonomous inference
   metrics.py           KPIs
   utils.py

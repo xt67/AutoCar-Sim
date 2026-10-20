@@ -16,24 +16,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from src import utils
 from src.model import MODEL_REGISTRY
-from src.preprocess import preprocess_image, augment
+from src.preprocess import preprocess_image, preprocess_depth, augment
 from src.utils import ensure_dir, set_seed, save_json
 
 
-def load_dataset(data_dir):
+def load_dataset(data_dir, use_depth=False):
     data_dir = os.path.abspath(data_dir)
     csv_path = os.path.join(data_dir, "telemetry.csv")
     img_dir = os.path.join(data_dir, "images")
     df = pd.read_csv(csv_path)
-    images, steerings = [], []
+    samples, steerings = [], []
+    has_depth = "depth_image" in df.columns
     for _, row in df.iterrows():
         img = cv2.imread(os.path.join(img_dir, str(row["image"])))
         if img is None:
             continue
-        images.append(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if use_depth and has_depth and pd.notna(row.get("depth_image", None)) and str(row["depth_image"]).strip():
+            dpath = os.path.join(img_dir, str(row["depth_image"]))
+            dimg = cv2.imread(dpath, cv2.IMREAD_COLOR)
+            if dimg is not None:
+                from src.preprocess import carla_depth_to_array, preprocess_depth
+                depth_arr = carla_depth_to_array(dimg)
+                samples.append((rgb, depth_arr))
+            else:
+                samples.append((rgb, None))
+        else:
+            samples.append((rgb, None))
         steerings.append(float(row["steering"]))
-    print(f"[train] loaded {len(images)} samples from {data_dir}")
-    return images, np.array(steerings, dtype=np.float32)
+    print(f"[train] loaded {len(samples)} samples from {data_dir} (depth={use_depth and has_depth})")
+    return samples, np.array(steerings, dtype=np.float32)
 
 
 def get_split(n, seed=config.RANDOM_SEED):
@@ -91,6 +103,8 @@ def main():
     parser.add_argument("--lr", type=float, default=config.LEARNING_RATE)
     parser.add_argument("--experiment", default="baseline")
     parser.add_argument("--augment", action="store_true")
+    parser.add_argument("--depth", action="store_true",
+                        help="Use depth channel (multi-sensor model)")
     parser.add_argument("--out-dir", default=None)
     args = parser.parse_args()
 
@@ -101,8 +115,13 @@ def main():
     ensure_dir(config.LOGS_DIR / exp_name)
     ensure_dir(config.REPORTS_DIR / exp_name)
 
-    images, steerings = load_dataset(args.data)
-    X = np.array([preprocess_image(img) for img in images], dtype=np.float32)
+    samples, steerings = load_dataset(args.data, use_depth=args.depth)
+    if args.depth:
+        X = np.array([np.concatenate([preprocess_image(rgb),
+                                      preprocess_depth(dep)[:, :, None]], axis=-1)
+                      for (rgb, dep) in samples], dtype=np.float32)
+    else:
+        X = np.array([preprocess_image(rgb) for (rgb, _) in samples], dtype=np.float32)
     y = steerings.astype(np.float32)
 
     train_idx, val_idx, test_idx = get_split(len(X), config.RANDOM_SEED)
@@ -114,6 +133,8 @@ def main():
         X_train, y_train = augment_train(X_train, y_train)
         print(f"[train] augmented train size: {len(X_train)}")
 
+    if args.depth and args.model == "nvidia":
+        args.model = "multisensor"
     model = MODEL_REGISTRY[args.model](lr=args.lr)
     model.summary()
 

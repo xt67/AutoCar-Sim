@@ -15,6 +15,37 @@ def carla_image_to_array(image):
     return array.copy()
 
 
+def carla_depth_to_array(image):
+    """Convert carla depth image (or a saved BGR png) to single-channel meters array."""
+    if hasattr(image, "raw_data"):
+        array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
+    else:
+        arr = image
+        if arr.ndim == 2:
+            arr = np.stack([arr, arr, arr], axis=-1)
+        if arr.shape[2] == 3:
+            array = arr
+        else:
+            array = arr[:, :, :3]
+    depth = (array[:, :, 0].astype(np.float32)
+             + array[:, :, 1].astype(np.float32) * 256.0
+             + array[:, :, 2].astype(np.float32) * 256.0 * 256.0)
+    depth = depth / (256.0 * 256.0 * 256.0 - 1.0) * 1000.0
+    return depth
+
+
+def preprocess_depth(depth, target_w=config.MODEL_INPUT_WIDTH,
+                    target_h=config.MODEL_INPUT_HEIGHT):
+    h, w = depth.shape[:2]
+    top = int(h * 0.35)
+    bottom = int(h * 0.88)
+    cropped = depth[top:bottom, :]
+    resized = cv2.resize(cropped, (target_w, target_h))
+    # normalize to [0,1] approx (clip 100m)
+    norm = np.clip(resized / 100.0, 0.0, 1.0)
+    return norm.astype(np.float32)
+
+
 def preprocess_image(img, target_w=config.MODEL_INPUT_WIDTH,
                     target_h=config.MODEL_INPUT_HEIGHT):
     """Crop sky/hood, resize, normalize to [-1, 1]. Returns float32 array."""
