@@ -1,150 +1,52 @@
 # AI-Based Autonomous Driving Using Behavioral Cloning
 
-University mini-project: collect human driving data in CARLA, train a CNN to predict steering (behavioral cloning), run autonomous inference, and compare **baseline vs. augmented** training.
+## Project Overview
 
-Research question: *How do training data quality and image augmentation affect steering prediction accuracy and driving performance in a CNN-based behavioral-cloning model?*
+This university mini-project explores how a Convolutional Neural Network (CNN) can learn steering behavior from human driving demonstrations in the CARLA simulator.
 
-## Tech stack
+The system collects driving data, processes camera images, trains a behavioral-cloning model, and evaluates its performance in a simulated driving environment. It also investigates whether image augmentation can improve the model's ability to predict steering angles under different driving conditions.
 
-| Layer | Choice |
-|---|---|
-| Simulator | CARLA 0.9.16 (Unreal Engine, 3D) |
-| Python | 3.12 (required by CARLA wheel) |
-| ML | TensorFlow/Keras |
-| CV/IO | OpenCV, NumPy, Pandas |
-| Viz | Matplotlib, Streamlit + Plotly (optional) |
+### Research Objective
 
-## CARLA control (use the provided examples)
+**Research question:** How do training data quality and image augmentation influence steering prediction accuracy and autonomous driving performance in a CNN-based behavioral-cloning system?
 
-This project does **not** reimplement driving controls. It relies on CARLA's own Python API examples:
+## Technology Stack
 
-- `PythonAPI/examples/manual_control.py` — human-driven vehicle (spawns the `hero` car you drive with WASD/arrows).
-- `PythonAPI/examples/generate_traffic.py` — spawns background traffic in autopilot.
+| Component             | Technology                   |
+| --------------------- | ---------------------------- |
+| Driving Simulator     | CARLA 0.9.16                 |
+| Programming Language  | Python 3.12                  |
+| Deep Learning         | TensorFlow / Keras           |
+| Image Processing      | OpenCV, NumPy                |
+| Data Processing       | Pandas                       |
+| Visualization         | Matplotlib                   |
+| Interactive Dashboard | Streamlit, Plotly (optional) |
 
-Start the simulator server first, then use these examples for car control.
+## Key Features
 
-## Setup
+* **Human Driving Data Collection:** Record camera images and steering controls while driving manually in CARLA.
+* **Autopilot Data Collection:** Generate additional training samples using CARLA's built-in autopilot.
+* **CNN-Based Steering Prediction:** Train a neural network to predict steering commands from front-facing camera images.
+* **Baseline vs. Augmented Training:** Compare model performance with and without image augmentation.
+* **Model Evaluation:** Analyze steering prediction errors and driving performance using evaluation metrics and visualizations.
+* **Autonomous Driving:** Test the trained model by allowing it to control a simulated vehicle.
+* **Experiment Tracking:** Save training histories, evaluation results, model configurations, and plots for comparison.
 
-```bash
-conda create -n carla python=3.12 -y
-conda activate carla
-pip install PythonAPI/carla/dist/carla-0.9.16-cp312-cp312-win_amd64.whl
-pip install -r requirements.txt
-```
+## Experimental Methodology
 
-## Run order
+The project evaluates two training approaches using the same dataset and experimental configuration.
 
-### 0. Launch CARLA server
-```bash
-CarlaUE4.exe
-```
+| Experiment | Training Approach                 | Purpose                                              |
+| ---------- | --------------------------------- | ---------------------------------------------------- |
+| Baseline   | Original training images          | Establish reference model performance                |
+| Augmented  | Training images with augmentation | Measure the effect of augmentation on generalization |
 
-### 1a. Collect human driving data (manual mode)
-Terminal 1 — background traffic:
-```bash
-python PythonAPI/examples/generate_traffic.py -n 20
-```
-Terminal 2 — drive the car yourself:
-```bash
-python PythonAPI/examples/manual_control.py
-```
-Terminal 3 — record data from the hero vehicle (no duplicate car, no control takeover):
-```bash
-python -m src.collect_data --mode manual --frames 5000 --out data/collected
-```
+Both experiments use the same persisted 70/15/15 training, validation, and test split. Data augmentation is applied only to the training set, ensuring that validation and test results remain unaffected by augmentation.
 
-### 1b. Or collect automated expert data (autopilot mode)
-```bash
-python -m src.collect_data --mode autopilot --frames 5000 --out data/collected --traffic 20
-```
+The comparison considers steering prediction accuracy, validation performance, and autonomous driving behavior in CARLA.
 
-### 2. Train baseline
-```bash
-python -m src.train --data data/collected --experiment baseline --epochs 30
-```
+## Expected Outcomes
 
-### 3. Train augmented (same split, same settings)
-```bash
-python -m src.train --data data/collected --experiment augmented --augment --epochs 30
-```
+The project aims to determine whether image augmentation improves steering prediction and helps the trained model generalize to different visual conditions.
 
-### 4. Evaluate
-```bash
-python -m src.evaluate --model models/baseline/model.keras --data data/collected --out reports/baseline/eval
-python -m src.evaluate --model models/augmented/model.keras --data data/collected --out reports/augmented/eval
-```
-
-### 5. Autonomous driving
-```bash
-python -m src.drive --model models/augmented/model.keras --frames 1000
-```
-Manual override: create a file `logs/STOP` or press Ctrl+C (safe shutdown applies full brake).
-
-### 6. Dashboard (optional)
-```bash
-streamlit run app/dashboard.py
-```
-
-### Smoke test (no CARLA)
-```bash
-python run_pipeline.py
-python -m pytest -q
-```
-
-### Hyperparameter tuning
-```bash
-python -m src.tune --data data/collected --lrs 1e-2,1e-3,1e-4 --epochs 10
-```
-
-### Multi-map / weather collection
-```bash
-python -m src.collect_data --mode autopilot --frames 5000 --out data/collected \\
-  --maps Town01,Town03,Town05 --weathers ClearNoon,CloudyNoon,SoftRainNoon --traffic 20
-```
-
-### Multi-sensor (RGB + depth)
-```bash
-python -m src.collect_data --mode autopilot --frames 2000 --out data/collected --depth --traffic 20
-python -m src.train --data data/collected --experiment multisensor --depth --model multisensor --epochs 30
-```
-
-### Reinforcement-learning baseline
-```bash
-python -m src.rl_baseline --episodes 5 --steps 200
-```
-
-## Limitation note (manual labels)
-When recording `manual_control.py` driving, this project reads `vehicle.get_control()` from the hero actor. That returns the last control applied by the manual-control process, aligned to the next world tick, so labels have an approximate one-tick (~0.05 s) delay. The collector never fabricates labels; if no hero vehicle exists it errors out. For perfectly synchronized labels, run the collector as the control owner (autopilot mode) or extend `manual_control.py` to stream controls (not done here to avoid modifying CARLA examples).
-
-## Project layout
-
-```
-config.py
-src/
-  carla_client.py      CARLA connection & sensors
-  collect_data.py      manual + autopilot collection
-  synthetic_data.py    offline synthetic dataset
-  preprocess.py        crop/resize/normalize + augmentation
-  model.py             CNN architectures
-  train.py             baseline/augmented training + experiment tracking
-  evaluate.py          metrics + plots
-  tune.py              hyperparameter grid search
-  rl_baseline.py       DQN reinforcement-learning baseline
-  drive.py             autonomous inference
-  metrics.py           KPIs
-  utils.py
-app/dashboard.py       Streamlit dashboard
-tests/                 pytest smoke tests
-```
-
-## Experiments
-Both runs use an identical, persisted 70/15/15 split (`data/splits.json`). Only the training set is augmented; validation/test stay untouched. Each run saves config, history, metrics and plots under `logs/<experiment>/` and `reports/<experiment>/`.
-
-## Demo
-
-![Demo](docs/images/demo.gif)
-
-A full screen recording is available at [`docs/videos/demo.mp4`](docs/videos/demo.mp4).
-
-## Git
-Datasets, weights, logs, venvs and CARLA binaries are gitignored. Commit source only.
+The results will provide a practical comparison of the baseline and augmented models, highlighting the benefits and limitations o
