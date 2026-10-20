@@ -50,3 +50,4 @@ The comparison considers steering prediction accuracy, validation performance, a
 The project aims to determine whether image augmentation improves steering prediction and helps the trained model generalize to different visual conditions.
 
 The results will provide a practical comparison of the baseline and augmented models, highlighting the benefits and limitations o
+<img width="480" height="282" alt="demo" src="https://github.com/user-attachments/assets/451729d5-73a8-4d5a-8499-589edf48bbfe" />
