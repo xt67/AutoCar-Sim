@@ -142,10 +142,9 @@ Both runs use an identical, persisted 70/15/15 split (`data/splits.json`). Only 
 
 ## Demo
 
-A screen recording of the simulation and autonomous driving run is available at
-[`docs/videos/demo.mp4`](docs/videos/demo.mp4) (43 MB). GitHub does not play
-videos inline in READMEs; download the file or host it on YouTube/Drive for
-inline playback.
+![Demo](docs/images/demo.gif)
+
+A full screen recording is available at [`docs/videos/demo.mp4`](docs/videos/demo.mp4).
 
 ## Git
 Datasets, weights, logs, venvs and CARLA binaries are gitignored. Commit source only.
