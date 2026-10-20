@@ -36,6 +36,8 @@ class CarlaEnv:
         self.image_queue = queue.Queue()
         self.collision_queue = queue.Queue()
         self.lane_queue = queue.Queue()
+        self.depth_camera = None
+        self.depth_queue = queue.Queue()
         self.frame = 0
 
     def spawn_vehicle(self, vehicle_filter="vehicle.tesla.model3", spawn_index=None):
@@ -85,6 +87,26 @@ class CarlaEnv:
                                                   attach_to=self.vehicle)
         self.lane_sensor.listen(self.lane_queue.put)
 
+    def attach_depth_camera(self, width=config.CAMERA_WIDTH, height=config.CAMERA_HEIGHT,
+                            fov=config.CAMERA_FOV, transform=None):
+        bp = self.blueprint_lib.find("sensor.camera.depth")
+        bp.set_attribute("image_size_x", str(width))
+        bp.set_attribute("image_size_y", str(height))
+        bp.set_attribute("fov", str(fov))
+        if transform is None:
+            transform = carla.Transform(carla.Location(x=2.0, z=1.4),
+                                         carla.Rotation(pitch=-15))
+        self.depth_camera = self.world.spawn_actor(bp, transform, attach_to=self.vehicle)
+        self.depth_queue = __import__("queue").Queue()
+        self.depth_camera.listen(self.depth_queue.put)
+        return self.depth_camera
+
+    def get_depth_image(self, timeout=5.0):
+        try:
+            return self.depth_queue.get(timeout=timeout)
+        except Exception:
+            return None
+
     def tick(self):
         if self.sync:
             self.world.tick()
@@ -108,13 +130,14 @@ class CarlaEnv:
         return items
 
     def cleanup(self):
-        for a in (self.camera, self.collision_sensor, self.lane_sensor, self.vehicle):
+        for a in (self.camera, self.depth_camera, self.collision_sensor, self.lane_sensor, self.vehicle):
             if a is not None:
                 try:
                     a.destroy()
                 except Exception:
                     pass
         self.camera = None
+        self.depth_camera = None
         self.collision_sensor = None
         self.lane_sensor = None
         self.vehicle = None
