@@ -14,6 +14,15 @@ Research question: *How do training data quality and image augmentation affect s
 | CV/IO | OpenCV, NumPy, Pandas |
 | Viz | Matplotlib, Streamlit + Plotly (optional) |
 
+## CARLA control (use the provided examples)
+
+This project does **not** reimplement driving controls. It relies on CARLA's own Python API examples:
+
+- `PythonAPI/examples/manual_control.py` — human-driven vehicle (spawns the `hero` car you drive with WASD/arrows).
+- `PythonAPI/examples/generate_traffic.py` — spawns background traffic in autopilot.
+
+Start the simulator server first, then use these examples for car control.
+
 ## Setup
 
 ```bash
@@ -25,21 +34,24 @@ pip install -r requirements.txt
 
 ## Run order
 
-### 0. Launch CARLA
+### 0. Launch CARLA server
 ```bash
 CarlaUE4.exe
 ```
 
 ### 1a. Collect human driving data (manual mode)
-In one terminal:
+Terminal 1 — background traffic:
+```bash
+python PythonAPI/examples/generate_traffic.py -n 20
+```
+Terminal 2 — drive the car yourself:
 ```bash
 python PythonAPI/examples/manual_control.py
 ```
-In another:
+Terminal 3 — record data from the hero vehicle (no duplicate car, no control takeover):
 ```bash
 python -m src.collect_data --mode manual --frames 5000 --out data/collected
 ```
-The collector attaches a front camera to the `hero` vehicle that `manual_control.py` drives. It does **not** spawn a vehicle or apply control. Labels come from `vehicle.get_control()` with a documented ~one-tick delay (see Limitation below).
 
 ### 1b. Or collect automated expert data (autopilot mode)
 ```bash
