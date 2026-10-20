@@ -41,7 +41,7 @@ def main():
     if len(X) == 0:
         print("No data found. Provide a dataset with telemetry.csv + images/.")
         return
-    model = tf.keras.models.load_model(args.model)
+    model = tf.keras.models.load_model(args.model, safe_mode=False)
     pred = model.predict(X, verbose=0).flatten()
     mae = float(np.mean(np.abs(pred - y)))
     mse = float(np.mean((pred - y) ** 2))

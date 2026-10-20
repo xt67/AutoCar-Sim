@@ -60,7 +60,7 @@ def main():
     args = parser.parse_args()
 
     print(f"[drive] loading model {args.model}")
-    model = tf.keras.models.load_model(args.model)
+    model = tf.keras.models.load_model(args.model, safe_mode=False)
 
     env = CarlaEnv(host=args.host, port=args.port, sync=True,
                    delta=config.COLLECT_DELTA, no_rendering=args.no_render)

@@ -12,8 +12,7 @@ def build_nvidia_model(input_shape=(config.MODEL_INPUT_HEIGHT,
                                     config.MODEL_INPUT_WIDTH, 3),
                        lr=config.LEARNING_RATE):
     inputs = keras.Input(shape=input_shape)
-    x = layers.Lambda(lambda t: t)(inputs)  # placeholder for normalization (done in preprocess)
-    x = layers.Conv2D(24, (5, 5), strides=(2, 2), activation="relu", padding="valid")(x)
+    x = layers.Conv2D(24, (5, 5), strides=(2, 2), activation="relu", padding="valid")(inputs)
     x = layers.Conv2D(36, (5, 5), strides=(2, 2), activation="relu", padding="valid")(x)
     x = layers.Conv2D(48, (5, 5), strides=(2, 2), activation="relu", padding="valid")(x)
     x = layers.Conv2D(64, (3, 3), activation="relu", padding="valid")(x)
