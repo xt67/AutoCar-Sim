@@ -140,5 +140,12 @@ tests/                 pytest smoke tests
 ## Experiments
 Both runs use an identical, persisted 70/15/15 split (`data/splits.json`). Only the training set is augmented; validation/test stay untouched. Each run saves config, history, metrics and plots under `logs/<experiment>/` and `reports/<experiment>/`.
 
+## Demo
+
+A screen recording of the simulation and autonomous driving run is available at
+[`docs/videos/demo.mp4`](docs/videos/demo.mp4) (43 MB). GitHub does not play
+videos inline in READMEs; download the file or host it on YouTube/Drive for
+inline playback.
+
 ## Git
 Datasets, weights, logs, venvs and CARLA binaries are gitignored. Commit source only.
