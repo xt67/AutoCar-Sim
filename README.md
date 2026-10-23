@@ -8,10 +8,13 @@ Collect human driving data in CARLA, train a CNN to predict steering, and compar
 
 | Metric | Baseline | Augmented |
 |---|---|---|
-| Test MAE (steering) | 0.0212 | 0.0183 |
-| Full-data MAE | 0.0191 | 0.0131 |
-| Full-data RMSE | 0.0348 | 0.0316 |
-| Autonomous drive collisions (300 frames) | 202 | 107 |
+| Test MAE (steering) | 0.0124 | 0.0131 |
+| Test MSE (steering) | 0.00073 | 0.00072 |
+| Autonomous drive distance (300 frames) | 93.2 m | 88.9 m |
+| Autonomous drive collisions (300 frames) | 0 | 0 |
+| Autonomous drive lane invasions (300 frames) | 9 | 4 |
+| Avg speed (km/h) | 22.4 | 21.4 |
+| Steering smoothness (MAD) | 0.0123 | 0.0191 |
 
 Augmentation improved offline accuracy but the baseline drove slightly better online — a classic behavioral-cloning finding.
 
@@ -117,7 +120,8 @@ CARLA 0.9.16 · Python 3.12 · TensorFlow/Keras · OpenCV · NumPy · Pandas · 
 - Training data, models, logs, and reports are gitignored (local only).
 - GPU not used on native Windows (TF ≥2.11); CPU training is fast enough.
 - Manual labels have ~1 tick delay (see code comments).
-- Augmented model has better offline MAE but worse online driving — a known BC limitation.
+- Augmented model: slightly worse offline MAE but fewer lane invasions online.
+- Both models: 0 collisions over 300 frames on Town10HD at ~22 km/h.
 
 ## Git
 
