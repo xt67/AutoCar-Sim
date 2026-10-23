@@ -83,7 +83,7 @@ def cnn_3d():
             z=[ww / 2 + 1.5],
             mode="text",
             text=[f"<b>{name}</b><br>H={h}  W={w}  C={c}"],
-            textfont=dict(size=12, color=TEXT),
+            textfont=dict(size=14, color="#ffffff"),
             showlegend=False,
             hoverinfo="none",
         ))
@@ -114,9 +114,10 @@ def cnn_3d():
         ),
         width=1500,
         height=850,
+        template="plotly_dark",
         paper_bgcolor=BG,
         plot_bgcolor=BG,
-        font=dict(color=TEXT, size=12),
+        font=dict(color=TEXT, size=13, family="Segoe UI, Arial, sans-serif"),
         legend=dict(font=dict(size=11, color=TEXT), itemsizing="constant",
                     bgcolor="rgba(13,17,23,0.8)", bordercolor=GRID),
         margin=dict(l=20, r=20, t=60, b=20),
@@ -149,7 +150,7 @@ def qnetwork_3d():
                         line=dict(color="#ffffff", width=1)),
             text=[f"steer={label}<br>Q={q:.3f}"],
             textposition="top center",
-            textfont=dict(size=11, color=TEXT),
+            textfont=dict(size=13, color="#ffffff"),
             showlegend=False,
             hoverinfo="text",
         ))
@@ -179,9 +180,10 @@ def qnetwork_3d():
         ),
         width=1000,
         height=700,
+        template="plotly_dark",
         paper_bgcolor=BG,
         plot_bgcolor=BG,
-        font=dict(color=TEXT, size=12),
+        font=dict(color=TEXT, size=13, family="Segoe UI, Arial, sans-serif"),
         margin=dict(l=20, r=20, t=60, b=20),
     )
     return fig
@@ -244,9 +246,10 @@ def trajectory_3d():
         ),
         width=1200,
         height=800,
+        template="plotly_dark",
         paper_bgcolor=BG,
         plot_bgcolor=BG,
-        font=dict(color=TEXT, size=12),
+        font=dict(color=TEXT, size=13, family="Segoe UI, Arial, sans-serif"),
         margin=dict(l=20, r=80, t=60, b=20),
         legend=dict(font=dict(size=12, color=TEXT)),
     )
