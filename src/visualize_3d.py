@@ -1,6 +1,6 @@
 """3D visualization of the CNN architecture and project algorithms.
 
-Dark theme, large readable labels, interactive HTML output.
+Dark theme, large readable labels, single self-contained HTML output.
 Run:  python -m src.visualize_3d
 """
 import os
@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from src.utils import ensure_dir
 
-# Dark theme colors
 BG = "#0d1117"
 GRID = "#30363d"
 TEXT = "#e6edf3"
@@ -70,7 +69,6 @@ def cnn_3d():
     for idx, (name, h, w, c, kind) in enumerate(layers):
         hh = max(h / 8.0, 1.2)
         ww = max(w / 15.0, 1.2)
-        depth = max(min(c / 12.0, 8.0), 1.2)
         color = LAYER_COLORS[kind]
 
         x0 = idx * xscale
@@ -79,13 +77,12 @@ def cnn_3d():
                        f"{name}  |  H={h} W={w} C={c}")
         fig.add_trace(box)
 
-        # Label in front of the box (at z offset so it's readable from default angle)
         fig.add_trace(go.Scatter3d(
             x=[(x0 + x1) / 2],
             y=[hh / 2 + 1.0],
             z=[ww / 2 + 1.5],
             mode="text",
-            text=[f"<b>{name}</b><br>H={h} W={w} C={c}"],
+            text=[f"<b>{name}</b><br>H={h}  W={w}  C={c}"],
             textfont=dict(size=12, color=TEXT),
             showlegend=False,
             hoverinfo="none",
@@ -147,8 +144,8 @@ def qnetwork_3d():
             x=[a], y=[0], z=[q],
             mode="markers+text",
             marker=dict(size=14 + q * 12, color=q, colorscale="Plasma",
-                        colorbar=dict(title="Q-value", x=1.02, len=0.5,
-                                      tickfont=dict(color=TEXT)),
+                        colorbar=dict(title=dict(text="Q-value", font=dict(color=TEXT)),
+                                      x=1.02, len=0.5, tickfont=dict(color=TEXT)),
                         line=dict(color="#ffffff", width=1)),
             text=[f"steer={label}<br>Q={q:.3f}"],
             textposition="top center",
@@ -157,7 +154,6 @@ def qnetwork_3d():
             hoverinfo="text",
         ))
 
-    # Base plane
     fig.add_trace(go.Mesh3d(
         x=[-1.2, 1.2, 1.2, -1.2],
         y=[-0.5, -0.5, 0.5, 0.5],
@@ -257,63 +253,55 @@ def trajectory_3d():
     return fig
 
 
-def combined_dashboard():
+def main():
+    ensure_dir(config.REPORTS_DIR)
     fig1 = cnn_3d()
     fig2 = qnetwork_3d()
     fig3 = trajectory_3d()
 
-    ensure_dir(config.REPORTS_DIR)
-    fig1.write_html(str(config.REPORTS_DIR / "cnn_3d.html"))
-    fig2.write_html(str(config.REPORTS_DIR / "dqn_3d.html"))
-    fig3.write_html(str(config.REPORTS_DIR / "trajectory_3d.html"))
+    # Single self-contained HTML with all three inline
+    html1 = fig1.to_html(full_html=False, include_plotlyjs="cdn")
+    html2 = fig2.to_html(full_html=False, include_plotlyjs=False)
+    html3 = fig3.to_html(full_html=False, include_plotlyjs=False)
 
-    html = f"""<!DOCTYPE html>
+    combined_html = f"""<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
     <title>3D Visualization Dashboard</title>
     <style>
         body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 20px; background: {BG}; color: {TEXT}; }}
-        h1 {{ color: #58a6ff; text-align: center; }}
-        .viz {{ margin: 20px 0; border: 1px solid {GRID}; border-radius: 8px;
-                background: #161b22; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }}
-        iframe {{ width: 100%; height: 750px; border: none; }}
-        h2 {{ color: #e6edf3; }}
+        h1 {{ color: #58a6ff; text-align: center; font-size: 28px; }}
+        .viz {{ margin: 25px 0; border: 1px solid {GRID}; border-radius: 10px;
+                background: #161b22; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }}
+        h2 {{ color: {TEXT}; font-size: 20px; margin-bottom: 10px; }}
+        .plotly-graph-div {{ width: 100% !important; }}
     </style>
 </head>
 <body>
     <h1>3D Visualization Dashboard</h1>
     <div class="viz">
-        <h2>CNN Architecture (NVIDIA End-to-End)</h2>
-        <iframe src="cnn_3d.html"></iframe>
+        <h2>1. CNN Architecture (NVIDIA End-to-End)</h2>
+        {html1}
     </div>
     <div class="viz">
-        <h2>DQN Q-Network (Steering Actions)</h2>
-        <iframe src="dqn_3d.html"></iframe>
+        <h2>2. DQN Q-Network (Steering Actions)</h2>
+        {html2}
     </div>
     <div class="viz">
-        <h2>Driving Trajectory (Height = Speed)</h2>
-        <iframe src="trajectory_3d.html"></iframe>
+        <h2>3. Driving Trajectory (Height = Speed)</h2>
+        {html3}
     </div>
 </body>
 </html>"""
-    combined_path = config.REPORTS_DIR / "3d_dashboard.html"
-    with open(combined_path, "w") as f:
-        f.write(html)
-    print(f"Saved {combined_path}")
-    return combined_path
 
-
-def main():
-    ensure_dir(config.REPORTS_DIR)
-    combined_path = combined_dashboard()
-    print("Generated:")
-    print(f"  {config.REPORTS_DIR / 'cnn_3d.html'}")
-    print(f"  {config.REPORTS_DIR / 'dqn_3d.html'}")
-    print(f"  {config.REPORTS_DIR / 'trajectory_3d.html'}")
-    print(f"  {config.REPORTS_DIR / '3d_dashboard.html'}")
+    out_path = config.REPORTS_DIR / "3d_dashboard.html"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(combined_html)
+    print(f"Saved {out_path}")
 
     import webbrowser
-    webbrowser.open(str(combined_path))
+    webbrowser.open(str(out_path))
 
 
 if __name__ == "__main__":
