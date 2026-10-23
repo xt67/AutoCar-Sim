@@ -106,18 +106,19 @@ if sel_exp:
         tm = training_metrics(hist_path)
         col1.metric("Best Val Loss", f"{tm['best_val_loss']:.4f}" if tm['best_val_loss'] is not None else "—")
         col2.metric("Best Val MAE", f"{tm['best_val_mae']:.4f}" if tm['best_val_mae'] is not None else "—")
-        col3.metric("Epochs Run", tm["epochs_run"])
-        col4.metric("Train Samples", f"{tm['train_samples']:,}")
+        col3.metric("Epochs Run", tm["epochs_run"] if tm["epochs_run"] is not None else "—")
+        ts = tm.get("train_samples")
+        col4.metric("Train Samples", f"{ts:,}" if ts is not None else "—")
 
     if os.path.exists(metrics_path):
         with open(metrics_path) as f:
             m = json.load(f)
         st.markdown("#### Test-set results")
         mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("Test MAE", f"{m['test']['mae']:.4f}")
-        mc2.metric("Test MSE", f"{m['test']['mse']:.4f}")
-        mc3.metric("Val MAE", f"{m['val']['mae']:.4f}")
-        mc4.metric("Val MSE", f"{m['val']['mse']:.4f}")
+        mc1.metric("Test MAE", f"{m['test']['mae']:.4f}" if m.get('test', {}).get('mae') is not None else "—")
+        mc2.metric("Test MSE", f"{m['test']['mse']:.4f}" if m.get('test', {}).get('mse') is not None else "—")
+        mc3.metric("Val MAE", f"{m['val']['mae']:.4f}" if m.get('val', {}).get('mae') is not None else "—")
+        mc4.metric("Val MSE", f"{m['val']['mse']:.4f}" if m.get('val', {}).get('mse') is not None else "—")
 
 st.markdown("---")
 
