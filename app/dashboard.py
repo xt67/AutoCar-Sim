@@ -122,7 +122,7 @@ if sel_exp:
 st.markdown("---")
 
 # ---------- Tabs ----------
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Training", "🛣️ Driving", "📊 Dataset", "📋 Experiment Info"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Training", "🛣️ Driving", "📊 Dataset", "🧊 3D View", "📋 Experiment Info"])
 
 # ---- Tab 1: Training ----
 with tab1:
@@ -221,8 +221,149 @@ with tab3:
     else:
         st.info("No telemetry.csv found in data dir.")
 
-# ---- Tab 4: Experiment Info ----
+# ---- Tab 4: 3D View ----
 with tab4:
+    st.markdown("### 3D Visualizations")
+    st.markdown("Interactive 3D views — rotate, zoom, and explore.")
+
+    # 3D CNN Architecture
+    st.markdown("#### CNN Architecture (NVIDIA End-to-End)")
+    layers = [
+        ("Input (RGB)", 66, 200, 3, "#58a6ff"),
+        ("Conv1 24ch", 31, 98, 24, "#f0883e"),
+        ("Conv2 36ch", 14, 47, 36, "#f0883e"),
+        ("Conv3 48ch", 5, 22, 48, "#f0883e"),
+        ("Conv4 64ch", 3, 20, 64, "#f85149"),
+        ("Conv5 64ch", 1, 18, 64, "#f85149"),
+        ("Flatten", 1, 1, 1152, "#8b949e"),
+        ("Dense 100", 1, 1, 100, "#3fb950"),
+        ("Dense 50", 1, 1, 50, "#3fb950"),
+        ("Dense 10", 1, 1, 10, "#3fb950"),
+        ("Steering", 1, 1, 1, "#f85149"),
+    ]
+    fig_cnn = go.Figure()
+    xscale = 2.5
+    for idx, (name, h, w, c, color) in enumerate(layers):
+        hh = max(h / 8.0, 0.8)
+        ww = max(w / 15.0, 0.8)
+        x0 = idx * xscale
+        x1 = x0 + 1.5
+        # Box as mesh
+        verts = [(x0,-hh/2,-ww/2),(x1,-hh/2,-ww/2),(x1,hh/2,-ww/2),(x0,hh/2,-ww/2),
+                 (x0,-hh/2,ww/2),(x1,-hh/2,ww/2),(x1,hh/2,ww/2),(x0,hh/2,ww/2)]
+        tris = [(0,1,2),(0,2,3),(4,5,6),(4,6,7),(0,1,5),(0,5,4),(2,3,7),(2,7,6),(0,3,7),(0,7,4),(1,2,6),(1,6,5)]
+        fig_cnn.add_trace(go.Mesh3d(
+            x=[v[0] for v in verts], y=[v[1] for v in verts], z=[v[2] for v in verts],
+            i=[t[0] for t in tris], j=[t[1] for t in tris], k=[t[2] for t in tris],
+            color=color, opacity=0.7, name=f"{name} (H={h} W={w} C={c})",
+            hoverinfo="name", flatshading=True,
+        ))
+        fig_cnn.add_trace(go.Scatter3d(
+            x=[(x0+x1)/2], y=[hh/2+0.8], z=[0],
+            mode="text", text=[f"<b>{name}</b><br>H={h} W={w} C={c}"],
+            textfont=dict(size=10, color="#ffffff"), showlegend=False, hoverinfo="none",
+        ))
+        if idx < len(layers) - 1:
+            fig_cnn.add_trace(go.Scatter3d(
+                x=[x1, x1+(xscale-1.5)], y=[0, 0], z=[0, 0],
+                mode="lines", line=dict(color="#484f58", width=2, dash="dot"),
+                showlegend=False, hoverinfo="none",
+            ))
+    fig_cnn.update_layout(
+        title="NVIDIA End-to-End CNN Architecture",
+        scene=dict(
+            xaxis=dict(title="Layer", showgrid=False, color="#e6edf3"),
+            yaxis=dict(title="Height", showgrid=True, gridcolor="#30363d", color="#e6edf3"),
+            zaxis=dict(title="Width", showgrid=True, gridcolor="#30363d", color="#e6edf3"),
+            aspectmode="manual", aspectratio=dict(x=2.5, y=1, z=1),
+            camera=dict(eye=dict(x=1.6, y=1.0, z=1.2)),
+            bgcolor="#0d1117",
+        ),
+        **{k: v for k, v in PLOTLY_THEME.items() if k not in ("margin",)},
+        height=600, showlegend=True,
+        legend=dict(font=dict(size=9, color="#e6edf3"), bgcolor="rgba(13,17,23,0.8)"),
+    )
+    st.plotly_chart(fig_cnn, use_container_width=True)
+
+    # 3D Trajectory from drive data
+    st.markdown("#### 3D Driving Trajectory")
+    if drive_logs:
+        sel_traj = st.selectbox("Telemetry file", drive_logs, key="traj3d_sel")
+        tdf = safe_read_csv(sel_traj)
+        if tdf is not None and "x" in tdf.columns and "y" in tdf.columns:
+            fig_t = go.Figure()
+            color_col = "speed_kmh" if "speed_kmh" in tdf.columns else None
+            fig_t.add_trace(go.Scatter3d(
+                x=tdf["x"], y=tdf["y"],
+                z=tdf["speed_kmh"] if "speed_kmh" in tdf.columns else [0]*len(tdf),
+                mode="lines",
+                line=dict(color=tdf["speed_kmh"] if "speed_kmh" in tdf.columns else "#58a6ff",
+                          colorscale="Turbo", width=5,
+                          colorbar=dict(title="Speed (km/h)") if "speed_kmh" in tdf.columns else None),
+                name="Path",
+                hovertemplate="X: %{x:.1f}<br>Y: %{y:.1f}<br>Speed: %{z:.1f} km/h",
+            ))
+            if "collision" in tdf.columns:
+                coll = tdf[tdf["collision"] == 1]
+                if not coll.empty:
+                    fig_t.add_trace(go.Scatter3d(
+                        x=coll["x"], y=coll["y"], z=coll["speed_kmh"],
+                        mode="markers", marker=dict(size=6, color="#f85149", symbol="x"),
+                        name="Collisions",
+                    ))
+            fig_t.update_layout(
+                title="Driving Trajectory (Height = Speed)",
+                scene=dict(
+                    xaxis=dict(title="X (m)", color="#e6edf3", gridcolor="#30363d"),
+                    yaxis=dict(title="Y (m)", color="#e6edf3", gridcolor="#30363d"),
+                    zaxis=dict(title="Speed (km/h)", color="#e6edf3", gridcolor="#30363d"),
+                    bgcolor="#0d1117",
+                ),
+                **{k: v for k, v in PLOTLY_THEME.items() if k not in ("margin",)},
+                height=600,
+            )
+            st.plotly_chart(fig_t, use_container_width=True)
+        else:
+            st.info("No x/y columns in telemetry.")
+    else:
+        st.info("No drive telemetry found. Run `python -m src.drive` first.")
+
+    # 3D DQN Q-values
+    st.markdown("#### DQN Q-Network (Steering Actions)")
+    actions = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]
+    q_vals = [0.12, 0.25, 0.41, 0.68, 0.95, 0.72, 0.48, 0.30, 0.15]
+    fig_q = go.Figure()
+    for a, q in zip(actions, q_vals):
+        fig_q.add_trace(go.Scatter3d(
+            x=[a, a], y=[0, 0], z=[0, q],
+            mode="lines", line=dict(color="#58a6ff", width=8),
+            showlegend=False, hoverinfo="none",
+        ))
+        fig_q.add_trace(go.Scatter3d(
+            x=[a], y=[0], z=[q],
+            mode="markers+text",
+            marker=dict(size=10 + q * 12, color=q, colorscale="Plasma",
+                        colorbar=dict(title="Q-value"), line=dict(color="#ffffff", width=1)),
+            text=[f"steer={a:.2f}<br>Q={q:.2f}"],
+            textposition="top center",
+            textfont=dict(size=10, color="#ffffff"),
+            showlegend=False, hoverinfo="text",
+        ))
+    fig_q.update_layout(
+        title="DQN Q-Values per Steering Action",
+        scene=dict(
+            xaxis=dict(title="Steering", tickvals=actions, color="#e6edf3", gridcolor="#30363d"),
+            yaxis=dict(title="", showticklabels=False, color="#e6edf3"),
+            zaxis=dict(title="Q-value", color="#e6edf3", gridcolor="#30363d"),
+            bgcolor="#0d1117",
+        ),
+        **{k: v for k, v in PLOTLY_THEME.items() if k not in ("margin",)},
+        height=500,
+    )
+    st.plotly_chart(fig_q, use_container_width=True)
+
+# ---- Tab 5: Experiment Info ----
+with tab5:
     if sel_exp:
         cfg_path = os.path.join(logs_dir, sel_exp, "config.json")
         if os.path.exists(cfg_path):
