@@ -40,11 +40,17 @@ python -m src.visualize_3d
 
 ## Setup
 
+### Dashboard only (Streamlit Cloud / lightweight)
+```bash
+pip install -r requirements.txt
+```
+
+### Full pipeline (local, Python 3.12 required for CARLA)
 ```bash
 conda create -n carla python=3.12 -y
 conda activate carla
 pip install PythonAPI/carla/dist/carla-0.9.16-cp312-cp312-win_amd64.whl
-pip install -r requirements.txt
+pip install -r requirements-full.txt
 ```
 
 ## Run

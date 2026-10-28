@@ -1,18 +1,4 @@
-# Python 3.12 required for CARLA 0.9.16 wheel
-carla==0.9.16
-tensorflow>=2.15
-numpy
-opencv-python
-pandas
-matplotlib
-plotly
-streamlit
-scikit-learn
-flask
-python-socketio
-eventlet
-pillow
-scipy
-pygame
-shapely
-networkx
+streamlit>=1.30
+pandas>=2.0
+numpy>=1.25
+plotly>=5.0

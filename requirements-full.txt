@@ -1,0 +1,18 @@
+# Full pipeline (Python 3.12 required for CARLA)
+carla==0.9.16
+tensorflow>=2.15
+numpy
+opencv-python
+pandas
+matplotlib
+plotly
+streamlit
+scikit-learn
+flask
+python-socketio
+eventlet
+pillow
+scipy
+pygame
+shapely
+networkx
