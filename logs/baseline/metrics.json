@@ -1,0 +1,21 @@
+{
+  "experiment": "baseline",
+  "augment": false,
+  "model": "light",
+  "epochs_run": 5,
+  "elapsed_seconds": 5.789693832397461,
+  "train_samples": 210,
+  "val_samples": 45,
+  "test_samples": 45,
+  "val": {
+    "mae": 0.08499891310930252,
+    "mse": 0.009045237675309181,
+    "n": 45
+  },
+  "test": {
+    "mae": 0.10482260584831238,
+    "mse": 0.01404058001935482,
+    "n": 45
+  },
+  "best_val_loss": 0.009045236743986607
+}
