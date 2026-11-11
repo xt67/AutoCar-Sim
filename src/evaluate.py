@@ -15,18 +15,8 @@ from src.preprocess import preprocess_image
 from src.utils import ensure_dir
 
 
-def load_data(data_dir):
-    csv_path = os.path.join(data_dir, "telemetry.csv")
-    img_dir = os.path.join(data_dir, "images")
-    df = pd.read_csv(csv_path)
-    X, y = [], []
-    for _, row in df.iterrows():
-        img = cv2.imread(os.path.join(img_dir, str(row["image"])))
-        if img is None:
-            continue
-        X.append(preprocess_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
-        y.append(float(row["steering"]))
-    return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32)
+from pathlib import Path
+from src.dataset import load_dataset, held_out_indices
 
 
 def main():
@@ -34,14 +24,20 @@ def main():
     parser.add_argument("--model", required=True)
     parser.add_argument("--data", required=True)
     parser.add_argument("--out", default=str(config.REPORTS_DIR / "eval"))
+    parser.add_argument("--external-dataset", action="store_true", help="Explicitly evaluate all samples from a separate unseen dataset")
     args = parser.parse_args()
 
     ensure_dir(args.out)
-    X, y = load_data(args.data)
-    if len(X) == 0:
-        print("No data found. Provide a dataset with telemetry.csv + images/.")
-        return
     model = tf.keras.models.load_model(args.model, safe_mode=False)
+    use_depth = model.input_shape[-1] == 4
+    X, y, rows, fingerprint = load_dataset(args.data, use_depth=use_depth)
+    partition = "external" if args.external_dataset else "test"
+    if not args.external_dataset:
+        manifest = Path(args.model).with_name("splits.json")
+        if not manifest.exists():
+            parser.error("Missing training splits.json; retrain with an auditable split or supply --external-dataset for genuinely unseen data")
+        indices = held_out_indices(manifest, fingerprint, len(X))
+        X, y = X[indices], y[indices]
     pred = model.predict(X, verbose=0).flatten()
     mae = float(np.mean(np.abs(pred - y)))
     mse = float(np.mean((pred - y) ** 2))
@@ -64,7 +60,7 @@ def main():
     fig.savefig(os.path.join(args.out, "steering_dist.png")); plt.close(fig)
 
     with open(os.path.join(args.out, "metrics.json"), "w") as f:
-        json.dump({"mae": mae, "mse": mse, "rmse": rmse, "n": len(y)}, f, indent=2)
+        json.dump({"mae": mae, "mse": mse, "rmse": rmse, "n": len(y), "partition": partition, "fingerprint": fingerprint}, f, indent=2)
     print(f"Plots saved to {args.out}")
 
 

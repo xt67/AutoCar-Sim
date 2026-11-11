@@ -16,66 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from src import utils
 from src.model import MODEL_REGISTRY
-from src.preprocess import preprocess_image, preprocess_depth, augment
+from src.preprocess import preprocess_image, preprocess_depth, augment, brighten_rgb
 from src.utils import ensure_dir, set_seed, save_json
 
 
-def load_dataset(data_dir, use_depth=False):
-    data_dir = os.path.abspath(data_dir)
-    csv_path = os.path.join(data_dir, "telemetry.csv")
-    img_dir = os.path.join(data_dir, "images")
-    df = pd.read_csv(csv_path)
-    samples, steerings = [], []
-    has_depth = "depth_image" in df.columns
-    for _, row in df.iterrows():
-        img = cv2.imread(os.path.join(img_dir, str(row["image"])))
-        if img is None:
-            continue
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        if use_depth and has_depth and pd.notna(row.get("depth_image", None)) and str(row["depth_image"]).strip():
-            dpath = os.path.join(img_dir, str(row["depth_image"]))
-            dimg = cv2.imread(dpath, cv2.IMREAD_COLOR)
-            if dimg is not None:
-                from src.preprocess import carla_depth_to_array, preprocess_depth
-                depth_arr = carla_depth_to_array(dimg)
-                samples.append((rgb, depth_arr))
-            else:
-                samples.append((rgb, None))
-        else:
-            samples.append((rgb, None))
-        steerings.append(float(row["steering"]))
-    print(f"[train] loaded {len(samples)} samples from {data_dir} (depth={use_depth and has_depth})")
-    return samples, np.array(steerings, dtype=np.float32)
-
-
-def get_split(n, seed=config.RANDOM_SEED):
-    """Deterministic 70/15/15 split, persisted to data/splits.json."""
-    splits_path = os.path.join(config.DATA_DIR, "splits.json") if hasattr(config, "DATA_DIR") else None
-    # resolve relative to project root
-    splits_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                               "data", "splits.json")
-    if os.path.exists(splits_path):
-        with open(splits_path) as f:
-            sp = json.load(f)
-        if sp.get("n") == n and sp.get("seed") == seed:
-            print(f"[train] reusing saved split from {splits_path}")
-            return np.array(sp["train"]), np.array(sp["val"]), np.array(sp["test"])
-    idx = np.arange(n)
-    rng = np.random.default_rng(seed)
-    rng.shuffle(idx)
-    n_train = int(0.70 * n)
-    n_val = int(0.15 * n)
-    train_idx = idx[:n_train]
-    val_idx = idx[n_train:n_train + n_val]
-    test_idx = idx[n_train + n_val:]
-    os.makedirs(os.path.dirname(splits_path), exist_ok=True)
-    with open(splits_path, "w") as f:
-        json.dump({"n": n, "seed": seed,
-                   "train": train_idx.tolist(),
-                   "val": val_idx.tolist(),
-                   "test": test_idx.tolist()}, f)
-    print(f"[train] saved split to {splits_path}")
-    return train_idx, val_idx, test_idx
+from src.dataset import load_dataset, get_split, save_split
 
 
 def augment_train(X, y):
@@ -89,7 +34,7 @@ def augment_train(X, y):
         # brightness
         if np.random.rand() < 0.5:
             f = np.random.uniform(0.7, 1.3)
-            out_x.append(np.clip(img * f, -1.0, 1.0).astype(np.float32))
+            out_x.append(brighten_rgb(img, f))
             out_y.append(st)
     return np.array(out_x, dtype=np.float32), np.array(out_y, dtype=np.float32)
 
@@ -106,6 +51,7 @@ def main():
     parser.add_argument("--depth", action="store_true",
                         help="Use depth channel (multi-sensor model)")
     parser.add_argument("--out-dir", default=None)
+    parser.add_argument("--split-gap", type=int, default=30, help="Frames excluded after each temporal split boundary")
     args = parser.parse_args()
 
     set_seed(config.RANDOM_SEED)
@@ -115,16 +61,15 @@ def main():
     ensure_dir(config.LOGS_DIR / exp_name)
     ensure_dir(config.REPORTS_DIR / exp_name)
 
-    samples, steerings = load_dataset(args.data, use_depth=args.depth)
-    if args.depth:
-        X = np.array([np.concatenate([preprocess_image(rgb),
-                                      preprocess_depth(dep)[:, :, None]], axis=-1)
-                      for (rgb, dep) in samples], dtype=np.float32)
-    else:
-        X = np.array([preprocess_image(rgb) for (rgb, _) in samples], dtype=np.float32)
-    y = steerings.astype(np.float32)
-
-    train_idx, val_idx, test_idx = get_split(len(X), config.RANDOM_SEED)
+    if args.model == "multisensor":
+        args.depth = True
+    if args.depth and args.model not in ("nvidia", "multisensor"):
+        parser.error("--depth requires nvidia or multisensor")
+    X, y, rows, fingerprint = load_dataset(args.data, use_depth=args.depth)
+    sessions = rows["session_id"].astype(str).values if "session_id" in rows else None
+    parts = get_split(len(X), sessions=sessions, gap=args.split_gap)
+    train_idx, val_idx, test_idx = parts
+    save_split(os.path.join(out_dir, "splits.json"), parts, fingerprint, args.depth, args.split_gap, rows)
     X_train, y_train = X[train_idx], y[train_idx]
     X_val, y_val = X[val_idx], y[val_idx]
     X_test, y_test = X[test_idx], y[test_idx]
@@ -159,7 +104,7 @@ def main():
         verbose=1,
     )
     elapsed = time.time() - t0
-    model.save(ckpt_path)
+    model = keras.models.load_model(ckpt_path)
 
     # Evaluation on val + test
     def ev(split_name, Xs, ys):

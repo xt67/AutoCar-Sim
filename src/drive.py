@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import time
+import random
 
 import carla
 import numpy as np
@@ -57,99 +58,117 @@ def main():
     parser.add_argument("--camera-w", type=int, default=config.CAMERA_WIDTH)
     parser.add_argument("--camera-h", type=int, default=config.CAMERA_HEIGHT)
     parser.add_argument("--no-render", action="store_true")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--spawn-index", type=int, default=0)
     args = parser.parse_args()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    if args.no_render:
+        parser.error("Camera inference requires rendering; use CARLA -RenderOffScreen instead")
 
     print(f"[drive] loading model {args.model}")
     model = tf.keras.models.load_model(args.model, safe_mode=False)
 
     env = CarlaEnv(host=args.host, port=args.port, sync=True,
                    delta=config.COLLECT_DELTA, no_rendering=args.no_render)
-    if args.map:
-        env.world = env.client.load_world(args.map)
-        env.map = env.world.get_map()
-        env.blueprint_lib = env.world.get_blueprint_library()
-        s = env.world.get_settings()
-        s.synchronous_mode = True
-        s.fixed_delta_seconds = config.COLLECT_DELTA
-        env.world.apply_settings(s)
+    try:
+        if args.map:
+            env.world = env.client.load_world(args.map)
+            env.map = env.world.get_map()
+            env.blueprint_lib = env.world.get_blueprint_library()
+            env.original_settings = env.world.get_settings()
+            s = env.world.get_settings()
+            s.synchronous_mode = True
+            s.fixed_delta_seconds = config.COLLECT_DELTA
+            env.world.apply_settings(s)
 
-    env.spawn_vehicle()
-    env.attach_camera(width=args.camera_w, height=args.camera_h)
-    env.attach_collision()
-    env.attach_lane_invasion()
-    if args.traffic > 0:
-        env.spawn_traffic(args.traffic)
+        env.spawn_vehicle(spawn_index=args.spawn_index)
+        env.attach_camera(width=args.camera_w, height=args.camera_h)
+        if model.input_shape[-1] == 4:
+            env.attach_depth_camera(width=args.camera_w, height=args.camera_h)
+        env.tm.set_random_device_seed(args.seed)
+        env.attach_collision()
+        env.attach_lane_invasion()
+        if args.traffic > 0:
+            env.spawn_traffic(args.traffic)
 
-    speed_ctrl = SpeedController(args.target_speed)
-    ensure_dir(os.path.dirname(args.out))
+        speed_ctrl = SpeedController(args.target_speed)
+        ensure_dir(os.path.dirname(args.out))
 
-    with open(args.out, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["frame", "timestamp", "speed_kmh", "steering_pred",
-                         "throttle", "brake", "x", "y", "z", "yaw",
-                         "collision", "lane_invasion"])
+        with open(args.out, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["frame", "timestamp", "speed_kmh", "steering_pred",
+                             "throttle", "brake", "x", "y", "z", "yaw",
+                             "collision", "lane_invasion"])
 
-        # warmup
-        for _ in range(10):
-            env.tick()
-            env.get_image(timeout=1.0)
-
-        collected = 0
-        t0 = time.time()
-        stop_file = os.path.join(os.path.dirname(args.out), "STOP")
-        try:
-            while collected < args.frames:
-                if os.path.exists(stop_file):
-                    print("[drive] STOP file detected, shutting down.")
-                    break
+            # warmup
+            for _ in range(10):
                 env.tick()
-                image = env.get_image(timeout=2.0)
-                if image is None:
-                    continue
+                env.get_image(timeout=1.0)
 
-                arr = carla_image_to_array(image)
-                proc = preprocess_image(arr)
-                inp = np.expand_dims(proc, axis=0)
-                steer = float(model.predict(inp, verbose=0)[0][0])
-                steer = clamp(steer, -1.0, 1.0)
-
-                sp = speed_kmh(env.vehicle)
-                throttle, brake = speed_ctrl.update(sp)
-
-                control = carla.VehicleControl(throttle=throttle, steer=steer,
-                                              brake=brake)
-                control.manual_gear_shift = False
-                env.vehicle.apply_control(control)
-
-                collisions = env.drain(env.collision_queue)
-                lanes = env.drain(env.lane_queue)
-                collision_flag = 1 if collisions else 0
-                lane_flag = 1 if lanes else 0
-
-                tr = env.vehicle.get_transform()
-                writer.writerow([collected, time.time(), round(sp, 3), round(steer, 4),
-                                round(throttle, 4), round(brake, 4),
-                                round(tr.location.x, 3), round(tr.location.y, 3),
-                                round(tr.location.z, 3), round(tr.rotation.yaw, 3),
-                                collision_flag, lane_flag])
-                f.flush()
-
-                collected += 1
-                if collected % 50 == 0:
-                    print(f"[drive] {collected}/{args.frames}  speed={sp:.1f} km/h  "
-                          f"steer={steer:.3f}  collisions={collision_flag}")
-
-                if collision_flag:
-                    print("[drive] collision detected!")
-        except KeyboardInterrupt:
-            print("\n[drive] interrupted by user (safe shutdown).")
-        finally:
+            collected = 0
+            t0 = time.time()
+            stop_file = os.path.join(os.path.dirname(args.out), "STOP")
             try:
-                env.vehicle.apply_control(carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0))
-            except Exception:
-                pass
-            print(f"[drive] done. {collected} frames. log: {args.out}")
-    env.cleanup()
+                while collected < args.frames:
+                    if os.path.exists(stop_file):
+                        print("[drive] STOP file detected, shutting down.")
+                        break
+                    env.tick()
+                    image = env.get_image(timeout=2.0)
+                    if image is None:
+                        raise RuntimeError("Timed out waiting for matching RGB frame")
+
+                    arr = carla_image_to_array(image)
+                    proc = preprocess_image(arr)
+                    if model.input_shape[-1] == 4:
+                        from src.preprocess import carla_depth_to_array, preprocess_depth
+                        depth = env.get_depth_image(timeout=2.0)
+                        if depth is None:
+                            raise RuntimeError("Missing matching depth frame")
+                        proc = np.concatenate([proc, preprocess_depth(carla_depth_to_array(depth))[..., None]], axis=-1)
+                    inp = np.expand_dims(proc, axis=0)
+                    steer = float(model.predict(inp, verbose=0)[0][0])
+                    steer = clamp(steer, -1.0, 1.0)
+
+                    sp = speed_kmh(env.vehicle)
+                    throttle, brake = speed_ctrl.update(sp)
+
+                    control = carla.VehicleControl(throttle=throttle, steer=steer,
+                                                  brake=brake)
+                    control.manual_gear_shift = False
+                    env.vehicle.apply_control(control)
+
+                    collisions = env.drain(env.collision_queue)
+                    lanes = env.drain(env.lane_queue)
+                    collision_flag = 1 if collisions else 0
+                    lane_flag = 1 if lanes else 0
+
+                    tr = env.vehicle.get_transform()
+                    writer.writerow([image.frame, image.timestamp, round(sp, 3), round(steer, 4),
+                                    round(throttle, 4), round(brake, 4),
+                                    round(tr.location.x, 3), round(tr.location.y, 3),
+                                    round(tr.location.z, 3), round(tr.rotation.yaw, 3),
+                                    collision_flag, lane_flag])
+                    f.flush()
+
+                    collected += 1
+                    if collected % 50 == 0:
+                        print(f"[drive] {collected}/{args.frames}  speed={sp:.1f} km/h  "
+                              f"steer={steer:.3f}  collisions={collision_flag}")
+
+                    if collision_flag:
+                        print("[drive] collision detected!")
+            except KeyboardInterrupt:
+                print("\n[drive] interrupted by user (safe shutdown).")
+            finally:
+                try:
+                    env.vehicle.apply_control(carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0))
+                except Exception:
+                    pass
+                print(f"[drive] done. {collected} frames. log: {args.out}")
+    finally:
+        env.cleanup()
 
 
 if __name__ == "__main__":

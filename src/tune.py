@@ -50,8 +50,8 @@ def main():
 
     save_json(results, os.path.join(args.out, "tune_results.json"))
     # summary
-    print("\n=== Tuning summary (sorted by test MAE) ===")
-    results.sort(key=lambda r: r["metrics"]["test"]["mae"])
+    print("\n=== Tuning summary (sorted by validation MAE) ===")
+    results.sort(key=lambda r: r["metrics"]["val"]["mae"])
     for r in results:
         print(f"lr={r['lr']:.0e}  aug={r['augment']:6s}  "
               f"test_MAE={r['metrics']['test']['mae']:.4f}  "

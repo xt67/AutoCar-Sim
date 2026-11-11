@@ -98,6 +98,8 @@ st.markdown("---")
 
 # ---------- KPI Row ----------
 if sel_exp:
+    if not (config.MODELS_DIR / sel_exp / "splits.json").exists():
+        st.warning("Legacy experiment: no saved held-out split manifest. These metrics are not independently verified test-set evidence.")
     hist_path = os.path.join(logs_dir, sel_exp, "history.json")
     metrics_path = os.path.join(logs_dir, sel_exp, "metrics.json")
 
@@ -164,7 +166,7 @@ with tab2:
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Frames", f"{dm['frames']:,}")
                 k2.metric("Avg Speed", f"{dm['avg_speed_kmh']:.1f} km/h")
-                k3.metric("Collisions", dm["collisions"])
+                k3.metric("Collision frames", dm["collisions"])
                 k4.metric("Lane Inv.", dm["lane_invasions"])
                 k5, k6, k7, k8 = st.columns(4)
                 k5.metric("Distance", f"{dm['distance_m']:.1f} m")
@@ -330,7 +332,8 @@ with tab4:
         st.info("No drive telemetry found. Run `python -m src.drive` first.")
 
     # 3D DQN Q-values
-    st.markdown("#### DQN Q-Network (Steering Actions)")
+    st.markdown("#### Illustrative DQN Q-Network (Steering Actions)")
+    st.caption("Fixed example values for explaining the architecture; not outputs from a trained DQN or a driving evaluation.")
     actions = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]
     q_vals = [0.12, 0.25, 0.41, 0.68, 0.95, 0.72, 0.48, 0.30, 0.15]
     fig_q = go.Figure()

@@ -27,9 +27,9 @@ def carla_depth_to_array(image):
             array = arr
         else:
             array = arr[:, :, :3]
-    depth = (array[:, :, 0].astype(np.float32)
+    depth = (array[:, :, 2].astype(np.float32)
              + array[:, :, 1].astype(np.float32) * 256.0
-             + array[:, :, 2].astype(np.float32) * 256.0 * 256.0)
+             + array[:, :, 0].astype(np.float32) * 256.0 * 256.0)
     depth = depth / (256.0 * 256.0 * 256.0 - 1.0) * 1000.0
     return depth
 
@@ -59,6 +59,13 @@ def preprocess_image(img, target_w=config.MODEL_INPUT_WIDTH,
     return norm
 
 
+def brighten_rgb(img, factor):
+    """Change RGB intensity in [0,1] space, preserving any depth channel."""
+    out = img.copy()
+    out[..., :3] = np.clip((out[..., :3] + 1.0) * factor, 0.0, 2.0) - 1.0
+    return out.astype(np.float32)
+
+
 def augment(img, steering, rng=None):
     """Simple augmentation: flip, brightness, shadow."""
     if rng is None:
@@ -73,7 +80,7 @@ def augment(img, steering, rng=None):
     # brightness
     if rand() < 0.5:
         factor = uniform(0.6, 1.4)
-        out = np.clip(out * factor, -1.0, 1.0)
+        out = brighten_rgb(out, factor)
     # gaussian blur
     if rand() < 0.2:
         out = cv2.GaussianBlur(out, (3, 3), 0)

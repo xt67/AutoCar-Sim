@@ -8,6 +8,7 @@ import carla
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from src.sensor_sync import image_for_frame
 
 
 class CarlaEnv:
@@ -19,6 +20,8 @@ class CarlaEnv:
         self.world = self.client.get_world()
         self.tm = self.client.get_trafficmanager(8000)
         settings = self.world.get_settings()
+        self.original_settings = self.world.get_settings()
+        self.traffic_actors = []
         self.sync = sync
         if sync:
             settings.synchronous_mode = True
@@ -102,23 +105,17 @@ class CarlaEnv:
         return self.depth_camera
 
     def get_depth_image(self, timeout=5.0):
-        try:
-            return self.depth_queue.get(timeout=timeout)
-        except Exception:
-            return None
+        return image_for_frame(self.depth_queue, self.frame, timeout)
 
     def tick(self):
         if self.sync:
-            self.world.tick()
+            self.frame = self.world.tick()
         else:
-            self.world.wait_for_tick()
-        self.frame += 1
+            self.frame = self.world.wait_for_tick().frame
+        return self.frame
 
     def get_image(self, timeout=5.0):
-        try:
-            return self.image_queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
+        return image_for_frame(self.image_queue, self.frame, timeout)
 
     def drain(self, q):
         items = []
@@ -130,7 +127,7 @@ class CarlaEnv:
         return items
 
     def cleanup(self):
-        for a in (self.camera, self.depth_camera, self.collision_sensor, self.lane_sensor, self.vehicle):
+        for a in (self.camera, self.depth_camera, self.collision_sensor, self.lane_sensor, self.vehicle, *self.traffic_actors):
             if a is not None:
                 try:
                     a.destroy()
@@ -141,12 +138,10 @@ class CarlaEnv:
         self.collision_sensor = None
         self.lane_sensor = None
         self.vehicle = None
+        self.traffic_actors = []
         if self.sync:
             try:
-                settings = self.world.get_settings()
-                settings.synchronous_mode = False
-                settings.fixed_delta_seconds = None
-                self.world.apply_settings(settings)
+                self.world.apply_settings(self.original_settings)
                 self.tm.set_synchronous_mode(False)
             except Exception:
                 pass
@@ -166,5 +161,6 @@ class CarlaEnv:
             actor = self.world.try_spawn_actor(bp, sp)
             if actor is not None:
                 actor.set_autopilot(True, self.tm.get_port())
+                self.traffic_actors.append(actor)
                 count += 1
         return count

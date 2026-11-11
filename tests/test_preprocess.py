@@ -1,7 +1,18 @@
 import numpy as np
+import pytest
+from types import SimpleNamespace
 
 import config
-from src.preprocess import preprocess_image, augment
+from src.preprocess import preprocess_image, augment, carla_depth_to_array
+
+
+@pytest.mark.parametrize("bgr,encoded", [([0, 0, 1], 1), ([0, 1, 0], 256), ([1, 0, 0], 65536), ([255, 255, 255], 16777215)])
+def test_depth_channel_order_for_saved_and_sensor_images(bgr, encoded):
+    expected = encoded / 16777215 * 1000
+    saved = np.array([[bgr]], dtype=np.uint8)
+    sensor = SimpleNamespace(height=1, width=1, raw_data=bytes(bgr + [255]))
+    for image in (saved, sensor):
+        assert float(carla_depth_to_array(image)[0, 0]) == pytest.approx(expected)
 
 
 def test_preprocess_shape():

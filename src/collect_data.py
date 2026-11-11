@@ -16,6 +16,9 @@ import os
 import random
 import sys
 import time
+import uuid
+import threading
+from src.sensor_sync import image_for_frame
 
 import carla
 
@@ -45,6 +48,12 @@ def find_hero(world, role_name="hero", timeout=30.0):
 
 
 def run_manual(args):
+    out_dir = ensure_dir(args.out)
+    img_dir = ensure_dir(out_dir / "images")
+    csv_path = out_dir / "telemetry.csv"
+    if csv_path.exists():
+        raise FileExistsError(f"Refusing to overwrite {csv_path}; choose a new --out directory")
+    session_id = uuid.uuid4().hex
     client = carla.Client(args.host, args.port)
     client.set_timeout(config.CARLA_TIMEOUT)
     world = client.get_world()
@@ -67,9 +76,16 @@ def run_manual(args):
     image_queue = __import__("queue").Queue()
     camera.listen(image_queue.put)
 
-    out_dir = ensure_dir(args.out)
-    img_dir = ensure_dir(out_dir / "images")
-    csv_path = out_dir / "telemetry.csv"
+    snapshots = {}
+    snapshots_lock = threading.Lock()
+    def capture_snapshot(snapshot):
+        actor = snapshot.find(vehicle.id)
+        if actor is not None:
+            with snapshots_lock:
+                snapshots[snapshot.frame] = (actor, vehicle.get_control())
+                for old in sorted(snapshots)[:-120]:
+                    snapshots.pop(old, None)
+    tick_callback = world.on_tick(capture_snapshot)
     print("[collect:manual] recording. Ctrl+C to stop.")
     collected = 0
     t0 = time.time()
@@ -78,25 +94,30 @@ def run_manual(args):
             writer = csv.writer(f)
             writer.writerow(["frame", "image", "timestamp", "speed_kmh",
                              "steering", "throttle", "brake", "x", "y", "z",
-                             "yaw", "collision", "lane_invasion"])
+                             "yaw", "collision", "lane_invasion", "session_id", "sensor_frame", "label_alignment"])
             while collected < args.frames:
-                world.wait_for_tick()
                 try:
                     image = image_queue.get(timeout=2.0)
-                except Exception:
+                except __import__("queue").Empty:
                     continue
-                control = vehicle.get_control()
-                tr = vehicle.get_transform()
+                with snapshots_lock:
+                    sample = snapshots.pop(image.frame, None)
+                if sample is None:
+                    continue
+                actor_snapshot, control = sample
+                tr = actor_snapshot.get_transform()
+                velocity = actor_snapshot.get_velocity()
+                recorded_speed = 3.6 * math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
                 fname = f"{collected:06d}.png"
                 image.save_to_disk(str(img_dir / fname))
-                writer.writerow([collected, fname, time.time(),
-                                 round(speed_kmh(vehicle), 3),
+                writer.writerow([collected, fname, image.timestamp,
+                                 round(recorded_speed, 3),
                                  round(float(control.steer), 4),
                                  round(float(control.throttle), 4),
                                  round(float(control.brake), 4),
                                  round(tr.location.x, 3), round(tr.location.y, 3),
                                  round(tr.location.z, 3), round(tr.rotation.yaw, 3),
-                                 0, 0])
+                                 0, 0, session_id, image.frame, "manual_control_sample_not_atomic"])
                 f.flush()
                 collected += 1
                 if collected % 50 == 0:
@@ -104,6 +125,7 @@ def run_manual(args):
     except KeyboardInterrupt:
         print("\n[collect:manual] interrupted by user.")
     finally:
+        world.remove_on_tick(tick_callback)
         try:
             camera.stop()
             camera.destroy()
@@ -133,6 +155,9 @@ def run_autopilot(args):
     out_dir = ensure_dir(args.out)
     img_dir = ensure_dir(out_dir / "images")
     csv_path = out_dir / "telemetry.csv"
+    if csv_path.exists():
+        raise FileExistsError(f"Refusing to overwrite {csv_path}; choose a new --out directory")
+    session_id = uuid.uuid4().hex
     print(f"[collect:autopilot] target {args.frames} frames across maps={maps} weathers={weathers}")
 
     frames_per_combo = max(1, args.frames // (len(maps) * len(weathers)))
@@ -141,76 +166,84 @@ def run_autopilot(args):
         writer = csv.writer(f)
         writer.writerow(["frame", "image", "depth_image", "timestamp", "speed_kmh", "steering",
                          "throttle", "brake", "x", "y", "z", "yaw",
-                         "collision", "lane_invasion", "map", "weather"])
+                         "collision", "lane_invasion", "map", "weather", "session_id", "sensor_frame", "label_alignment"])
         for mi, mname in enumerate(maps):
             if collected >= args.frames:
                 break
             env = CarlaEnv(host=args.host, port=args.port, sync=True,
                            delta=config.COLLECT_DELTA)
-            env.world = env.client.load_world(mname)
-            env.map = env.world.get_map()
-            env.blueprint_lib = env.world.get_blueprint_library()
-            s = env.world.get_settings()
-            s.synchronous_mode = True
-            s.fixed_delta_seconds = config.COLLECT_DELTA
-            env.world.apply_settings(s)
-            env.spawn_vehicle()
-            env.attach_camera(width=args.camera_w, height=args.camera_h)
-            if getattr(args, "depth", False):
-                env.attach_depth_camera(width=args.camera_w, height=args.camera_h)
-            env.attach_collision()
-            env.attach_lane_invasion()
-            if args.traffic > 0:
-                env.spawn_traffic(args.traffic)
-            from agents.navigation.behavior_agent import BehaviorAgent
-            agent = BehaviorAgent(env.vehicle, behavior=args.behavior)
-            spawn_points = env.map.get_spawn_points()
-            agent.set_destination(random.choice(spawn_points).location)
+            try:
+                if env.map.name.rsplit("/", 1)[-1] != mname.rsplit("/", 1)[-1]:
+                    env.client.set_timeout(60.0)
+                    env.world = env.client.load_world(mname)
+                    env.original_settings = env.world.get_settings()
+                    env.client.set_timeout(config.CARLA_TIMEOUT)
+                env.map = env.world.get_map()
+                env.blueprint_lib = env.world.get_blueprint_library()
+                s = env.world.get_settings()
+                s.synchronous_mode = True
+                s.fixed_delta_seconds = config.COLLECT_DELTA
+                env.world.apply_settings(s)
+                env.spawn_vehicle()
+                env.attach_camera(width=args.camera_w, height=args.camera_h)
+                if getattr(args, "depth", False):
+                    env.attach_depth_camera(width=args.camera_w, height=args.camera_h)
+                env.attach_collision()
+                env.attach_lane_invasion()
+                if args.traffic > 0:
+                    env.spawn_traffic(args.traffic)
+                from agents.navigation.behavior_agent import BehaviorAgent
+                agent = BehaviorAgent(env.vehicle, behavior=args.behavior)
+                spawn_points = env.map.get_spawn_points()
+                agent.set_destination(random.choice(spawn_points).location)
 
-            for wi, wname in enumerate(weathers):
-                if collected >= args.frames:
-                    break
-                _set_weather(env.world, wname)
-                print(f"[collect:autopilot] map={mname} weather={wname}")
-                for _ in range(10):
-                    env.tick()
-                    env.get_image(timeout=1.0)
-                target = min(args.frames, collected + frames_per_combo)
-                while collected < target and collected < args.frames:
-                    env.tick()
-                    image = env.get_image(timeout=2.0)
-                    if image is None:
-                        continue
-                    if agent.done():
-                        agent.set_destination(random.choice(spawn_points).location)
-                    control = agent.run_step()
-                    control.manual_gear_shift = False
-                    env.vehicle.apply_control(control)
-                    collisions = env.drain(env.collision_queue)
-                    lanes = env.drain(env.lane_queue)
-                    fname = f"{collected:06d}.png"
-                    image.save_to_disk(str(img_dir / fname))
-                    depth_fname = ""
-                    if getattr(args, "depth", False):
-                        dimg = env.get_depth_image(timeout=2.0)
-                        if dimg is not None:
-                            depth_fname = f"{collected:06d}_depth.png"
-                            dimg.save_to_disk(str(img_dir / depth_fname))
-                    tr = env.vehicle.get_transform()
-                    writer.writerow([collected, fname, depth_fname, time.time(),
-                                     round(speed_kmh(env.vehicle), 3),
-                                     round(float(control.steer), 4),
-                                     round(float(control.throttle), 4),
-                                     round(float(control.brake), 4),
-                                     round(tr.location.x, 3), round(tr.location.y, 3),
-                                     round(tr.location.z, 3), round(tr.rotation.yaw, 3),
-                                     1 if collisions else 0, 1 if lanes else 0,
-                                     mname, wname or "default"])
-                    f.flush()
-                    collected += 1
-                    if collected % 100 == 0:
-                        print(f"[collect:autopilot] {collected}/{args.frames}")
-            env.cleanup()
+                for wi, wname in enumerate(weathers):
+                    if collected >= args.frames:
+                        break
+                    _set_weather(env.world, wname)
+                    print(f"[collect:autopilot] map={mname} weather={wname}")
+                    for _ in range(10):
+                        env.tick()
+                        env.get_image(timeout=1.0)
+                    target = args.frames if mi == len(maps)-1 and wi == len(weathers)-1 else min(args.frames, collected + frames_per_combo)
+                    while collected < target and collected < args.frames:
+                        env.tick()
+                        image = env.get_image(timeout=2.0)
+                        if image is None:
+                            raise RuntimeError("Timed out waiting for matching RGB frame")
+                        if agent.done():
+                            agent.set_destination(random.choice(spawn_points).location)
+                        control = agent.run_step()
+                        control.manual_gear_shift = False
+                        env.vehicle.apply_control(control)
+                        collisions = env.drain(env.collision_queue)
+                        lanes = env.drain(env.lane_queue)
+                        fname = f"{collected:06d}.png"
+                        image.save_to_disk(str(img_dir / fname))
+                        depth_fname = ""
+                        if getattr(args, "depth", False):
+                            dimg = env.get_depth_image(timeout=2.0)
+                            if dimg is None:
+                                raise RuntimeError("Timed out waiting for matching depth frame")
+                            if dimg is not None:
+                                depth_fname = f"{collected:06d}_depth.png"
+                                dimg.save_to_disk(str(img_dir / depth_fname))
+                        tr = env.vehicle.get_transform()
+                        writer.writerow([collected, fname, depth_fname, image.timestamp,
+                                         round(speed_kmh(env.vehicle), 3),
+                                         round(float(control.steer), 4),
+                                         round(float(control.throttle), 4),
+                                         round(float(control.brake), 4),
+                                         round(tr.location.x, 3), round(tr.location.y, 3),
+                                         round(tr.location.z, 3), round(tr.rotation.yaw, 3),
+                                         1 if collisions else 0, 1 if lanes else 0,
+                                         mname, wname or "default", f"{session_id}-{mi}", image.frame, "observation_to_next_control"])
+                        f.flush()
+                        collected += 1
+                        if collected % 100 == 0:
+                            print(f"[collect:autopilot] {collected}/{args.frames}")
+            finally:
+                env.cleanup()
     print(f"[collect:autopilot] done. {collected} frames saved to {out_dir}")
 
 
