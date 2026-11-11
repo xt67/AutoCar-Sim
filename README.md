@@ -150,3 +150,7 @@ python -m src.benchmark --models models/baseline/model.keras models/augmented/mo
 ```
 
 Launch CARLA with `-RenderOffScreen` for background camera evaluation. CARLA no-rendering mode cannot supply camera input and is rejected by the driving command.
+
+## License
+
+AutoCar-Sim original contributions are licensed under the [MIT License](LICENSE). The existing CARLA copyright notice is preserved. Third-party dependencies, datasets and assets retain their respective terms.
